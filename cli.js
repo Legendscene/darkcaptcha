@@ -1,6 +1,7 @@
 const { Command } = require('commander');
 const fs = require('fs');
 const path = require('path');
+const pkg = require('./package.json');
 const DarkCaptcha = require('./index');
 
 const program = new Command();
@@ -8,7 +9,7 @@ const program = new Command();
 program
   .name('darkcaptcha')
   .description('Universal CAPTCHA solver — supports text, math, reCAPTCHA, hCaptcha, FunCAPTCHA, Turnstile, slider, puzzle, image, audio, and more')
-  .version('1.0.0');
+  .version(pkg.version);
 
 program
   .command('solve')
