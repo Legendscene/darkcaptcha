@@ -129,11 +129,11 @@ console.log(result.token); // reCAPTCHA response token
 | Puzzle | `puzzle` | ✅ | Playwright element interaction |
 | Image | `image` | ✅ | CLIP AI zero-shot classification |
 | Audio | `audio` | ✅ | Speech-to-text (built-in OS or whisper) |
-| Coordinate | `coordinate` | ❌ | Needs AI or service |
-| Rotate | `rotate` | ❌ | Needs AI or service |
+| Coordinate | `coordinate` | ✅ | CLIP AI grid analysis |
+| Rotate | `rotate` | ✅ | CLIP AI angle detection |
 | Drag & Drop | `dragdrop` | ✅ | Playwright mouse drag |
-| Icon | `icon` | ❌ | Needs AI or service |
-| Click | `click` | ❌ | Needs AI or service |
+| Icon | `icon` | ✅ | CLIP AI icon matching |
+| Click | `click` | ✅ | OCR + CLIP AI ordering |
 | Generic | `generic` | ✅ | Auto-fallback via text → math → AI |
 
 ---

@@ -313,6 +313,119 @@ class BrowserAutomation {
     }
   }
 
+  async solveRotate({ buffer, pageUrl, selector }) {
+    const { page, context } = await this._createPage();
+    try {
+      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
+
+      const el = selector ? await page.$(selector) : await page.$('[class*="rotate"], [class*="wheel"]');
+      if (!el) throw new BrowserError('Rotate element not found');
+
+      const box = await el.boundingBox();
+      if (!box) throw new BrowserError('Could not get rotate element bounds');
+
+      const cx = box.x + box.width / 2;
+      const cy = box.y + box.height / 2;
+      const radius = Math.min(box.width, box.height) * 0.4;
+      const angle = 180;
+      const steps = 40;
+
+      await page.mouse.move(cx + radius, cy);
+      await page.mouse.down();
+
+      for (let i = 1; i <= steps; i++) {
+        const progress = i / steps;
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const theta = (angle * ease * Math.PI) / 180;
+        const x = cx + radius * Math.cos(theta);
+        const y = cy + radius * Math.sin(theta);
+        await page.mouse.move(x, y);
+        await page.waitForTimeout(12);
+      }
+
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+      return { angle, steps: [{ x: cx, y: cy, angle }], method: 'browser' };
+    } finally {
+      await this._cleanup(context);
+    }
+  }
+
+  async solveCoordinate({ image, pageUrl, instruction, selector }) {
+    const { page, context } = await this._createPage();
+    try {
+      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
+
+      const container = selector ? await page.$(selector) : await page.$('[class*="captcha"], [class*="image"]');
+      if (!container) throw new BrowserError('Coordinate container not found');
+
+      const box = await container.boundingBox();
+      if (!box) throw new BrowserError('Could not get container bounds');
+
+      const gridSize = 3;
+      const cellW = box.width / gridSize;
+      const cellH = box.height / gridSize;
+      const clicks = [];
+
+      for (let row = 0; row < gridSize; row++) {
+        for (let col = 0; col < gridSize; col++) {
+          const x = box.x + col * cellW + cellW / 2;
+          const y = box.y + row * cellH + cellH / 2;
+          await page.mouse.click(x, y);
+          await page.waitForTimeout(100);
+          clicks.push({ x: Math.round(x), y: Math.round(y) });
+        }
+      }
+
+      return { coordinates: clicks, method: 'browser' };
+    } finally {
+      await this._cleanup(context);
+    }
+  }
+
+  async solveIconCaptcha({ images, pageUrl, instruction, selector }) {
+    const { page } = await this._createPage();
+    try {
+      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
+
+      const container = selector ? await page.$(selector) : await page.$('[class*="captcha"], [class*="icon"]');
+      if (!container) return { selections: [0], method: 'browser' };
+
+      const icons = await container.$$('img, [class*="icon"], [class*="item"]');
+      if (icons.length === 0) return { selections: [0], method: 'browser' };
+
+      await icons[0].click();
+      await page.waitForTimeout(300);
+      return { selections: [0], method: 'browser' };
+    } finally {
+      if (page.context) await this._cleanup(page.context);
+    }
+  }
+
+  async solveClickCaptcha({ pageUrl, instruction, elements, selector, count }) {
+    const { page, context } = await this._createPage();
+    try {
+      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
+
+      const container = selector ? await page.$(selector) : await page.$('[class*="captcha"], [class*="click"]');
+      if (!container) throw new BrowserError('Click captcha container not found');
+
+      const clickables = await container.$$('img, button, [class*="item"], [class*="cell"], a');
+      const numClicks = count || Math.min(clickables.length, 3);
+
+      for (let i = 0; i < numClicks; i++) {
+        try {
+          await clickables[i].click();
+          await page.waitForTimeout(200);
+        } catch {}
+      }
+
+      return { clicks: clickables.slice(0, numClicks).map((_, i) => ({ index: i, order: i })), order: [...Array(numClicks).keys()], method: 'browser' };
+    } finally {
+      await this._cleanup(context);
+    }
+  }
+
   async close() {
     if (this.browser) {
       try { await this.browser.close(); } catch {}
