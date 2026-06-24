@@ -343,4 +343,4 @@ npm test
 
 ## 📄 License
 
-MIT © Pranshu
+MIT © Legendscene
