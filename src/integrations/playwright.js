@@ -4,10 +4,9 @@ class CaptchaWatchdog {
   constructor(page, options = {}) {
     this.page = page;
     this.options = {
-      service: null,
-      apiKey: null,
       autoClick: true,
-      timeout: 30000,
+      timeout: 60000,
+      useAI: true,
       ...options,
     };
     this._solver = null;
@@ -15,94 +14,62 @@ class CaptchaWatchdog {
   }
 
   async start() {
-    if (this.options.service && this.options.apiKey) {
-      this._solver = new DarkCaptcha({
-        service: this.options.service,
-        apiKey: this.options.apiKey,
-      });
-    }
-
     await this._injectInterceptor();
     this._startPolling();
   }
 
   async _injectInterceptor() {
     await this.page.addInitScript(() => {
-      const origDefine = Object.defineProperty;
-      const origAppend = Node.prototype.appendChild;
-      const watchFrames = new Set();
+      window.__darkcaptcha_frames = [];
 
-      const checkForCaptcha = (node) => {
+      const origAppend = Node.prototype.appendChild;
+      Node.prototype.appendChild = function (node) {
         if (node.tagName === 'IFRAME') {
           const src = (node.src || '').toLowerCase();
-          if (src.includes('recaptcha') || src.includes('hcaptcha') ||
-              src.includes('arkoselabs') || src.includes('cf-turnstile') ||
-              src.includes('funcaptcha')) {
-            watchFrames.add(node);
-            node.addEventListener('load', () => {
-              window.__darkcaptcha_frames = window.__darkcaptcha_frames || [];
-              window.__darkcaptcha_frames.push({
-                src: node.src,
-                type: src.includes('recaptcha') ? 'recaptcha' :
-                      src.includes('hcaptcha') ? 'hcaptcha' :
-                      src.includes('arkoselabs') || src.includes('funcaptcha') ? 'funcaptcha' :
-                      src.includes('cf-turnstile') ? 'turnstile' : 'unknown',
-              });
-            });
-          }
-        }
-        if (node.src && typeof node.src === 'string') {
-          const s = node.src.toLowerCase();
-          if (s.includes('recaptcha') || s.includes('hcaptcha') ||
-              s.includes('turnstile') || s.includes('funcaptcha')) {
-            window.__darkcaptcha_frames = window.__darkcaptcha_frames || [];
+          if (['recaptcha', 'hcaptcha', 'arkoselabs', 'funcaptcha', 'turnstile'].some(s => src.includes(s))) {
             window.__darkcaptcha_frames.push({ src: node.src, time: Date.now() });
           }
         }
+        return origAppend.call(this, node);
       };
 
       document.addEventListener('DOMNodeInserted', (e) => {
-        if (e.target) checkForCaptcha(e.target);
+        if (e.target?.tagName === 'IFRAME') {
+          const src = (e.target.src || '').toLowerCase();
+          if (['recaptcha', 'hcaptcha', 'arkoselabs', 'funcaptcha', 'turnstile'].some(s => src.includes(s))) {
+            window.__darkcaptcha_frames.push({ src: e.target.src, time: Date.now() });
+          }
+        }
       });
 
-      window.__darkcaptcha_captchaDetected = () => {
-        return window.__darkcaptcha_frames && window.__darkcaptcha_frames.length > 0;
-      };
-
-      window.__darkcaptcha_getCaptchas = () => {
-        return window.__darkcaptcha_frames || [];
-      };
-
       window.__darkcaptcha_setToken = (token, type) => {
-        const textarea = document.querySelector(
-          type === 'hcaptcha' ? 'textarea[name="h-captcha-response"]' :
-          type === 'turnstile' ? 'textarea[name="cf-turnstile-response"]' :
-          'textarea[name="g-recaptcha-response"], #g-recaptcha-response'
-        );
-        if (textarea) {
-          textarea.value = token;
-          textarea.dispatchEvent(new Event('input', { bubbles: true }));
-          textarea.dispatchEvent(new Event('change', { bubbles: true }));
+        const sel = type === 'hcaptcha'
+          ? 'textarea[name="h-captcha-response"]'
+          : type === 'turnstile'
+          ? 'textarea[name="cf-turnstile-response"]'
+          : 'textarea[name="g-recaptcha-response"], #g-recaptcha-response';
+
+        const ta = document.querySelector(sel);
+        if (ta) {
+          ta.value = token;
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          ta.dispatchEvent(new Event('change', { bubbles: true }));
         }
-        const callback = type === 'hcaptcha' ? window.hcaptchaCallback :
-                         window.__recaptchaCallback || window.verifyCallback;
-        if (typeof callback === 'function') {
-          try { callback(token); } catch {}
-        }
+
         try {
           const entries = Object.entries(window.___grecaptcha_cfg?.clients || {});
           for (const [, client] of entries) {
-            if (client && typeof client.callback === 'function') {
-              client.callback(token);
-            }
+            if (client && typeof client.callback === 'function') client.callback(token);
           }
         } catch {}
+
+        if (typeof window.verifyCallback === 'function') window.verifyCallback(token);
       };
     });
   }
 
   _startPolling() {
-    this._pollTimer = setInterval(() => this._check(), 2000);
+    this._pollTimer = setInterval(() => this._check(), 1500);
   }
 
   stop() {
@@ -114,163 +81,241 @@ class CaptchaWatchdog {
 
   async _check() {
     try {
-      const hasCaptcha = await this.page.evaluate(() => {
-        return window.__darkcaptcha_captchaDetected ? window.__darkcaptcha_captchaDetected() : false;
-      });
-
-      if (!hasCaptcha) {
-        const domCheck = await this.page.evaluate(() => {
-          const frames = document.querySelectorAll('iframe');
-          for (const f of frames) {
-            const src = (f.src || '').toLowerCase();
-            if (src.includes('recaptcha') || src.includes('hcaptcha') ||
-                src.includes('turnstile') || src.includes('funcaptcha') ||
-                src.includes('arkoselabs')) return true;
-          }
-          return !!document.querySelector('textarea[name="g-recaptcha-response"], ' +
-            'textarea[name="h-captcha-response"], ' +
-            'textarea[name="cf-turnstile-response"]');
-        });
-        if (!domCheck) return;
-      }
-
-      const captchas = await this.page.evaluate(() => {
-        return window.__darkcaptcha_getCaptchas ? window.__darkcaptcha_getCaptchas() : [];
-      });
-
       const pageUrl = this.page.url();
-
-      for (const cap of captchas) {
-        const cacheKey = cap.src + '|' + pageUrl;
-        if (this._solved.has(cacheKey)) continue;
-
-        const type = this._detectType(cap.src || '');
-        const siteKey = this._extractSiteKey(cap.src || '');
-
-        if (siteKey) {
-          await this._solveOne({ type, siteKey, pageUrl, cacheKey });
-        }
-      }
-
-      await this._checkDomCaptchas(pageUrl);
+      await this._handleTokenBased(pageUrl);
+      await this._handleHCaptchaChallenge(pageUrl);
+      await this._handleRecaptchaChallenge(pageUrl);
     } catch (err) {
-      if (err.message && err.message.includes('detached')) {
+      if (err.message?.includes('detached') || err.message?.includes('Target closed')) {
         this.stop();
       }
     }
   }
 
-  async _checkDomCaptchas(pageUrl) {
+  async _handleTokenBased(pageUrl) {
+    const info = await this.page.evaluate(() => {
+      const els = {
+        recaptcha: document.querySelector('textarea[name="g-recaptcha-response"]'),
+        hcaptcha: document.querySelector('textarea[name="h-captcha-response"]'),
+        turnstile: document.querySelector('textarea[name="cf-turnstile-response"]'),
+      };
+      const sk = document.querySelector('[data-sitekey], [data-site-key]');
+      return {
+        recaptchaToken: els.recaptcha?.value || null,
+        hcaptchaToken: els.hcaptcha?.value || null,
+        turnstileToken: els.turnstile?.value || null,
+        sitekey: sk?.getAttribute('data-sitekey') || sk?.getAttribute('data-site-key') || null,
+      };
+    });
+
+    const checks = [
+      { type: 'recaptcha_v2', token: info.recaptchaToken },
+      { type: 'hcaptcha', token: info.hcaptchaToken },
+      { type: 'turnstile', token: info.turnstileToken },
+    ];
+
+    for (const c of checks) {
+      if (c.token === '') {
+        const key = `${c.type}:${info.sitekey}:${pageUrl}`;
+        if (!this._solved.has(key) && info.sitekey) {
+          await this._solveToken(c.type, info.sitekey, pageUrl, key);
+        }
+      }
+    }
+  }
+
+  async _handleHCaptchaChallenge(pageUrl) {
+    const challenge = await this._getHCaptchaChallenge();
+    if (!challenge) return;
+
+    const key = `hcaptcha-challenge:${pageUrl}:${challenge.prompt}`;
+    if (this._solved.has(key)) return;
+
+    console.error('[DarkCaptcha] hCaptcha image challenge detected. Solving with AI...');
+
+    const tiles = challenge.tiles.filter(t => t != null);
+    if (tiles.length === 0) return;
+
+    const result = await DarkCaptcha.solve({
+      type: 'image',
+      images: tiles,
+      question: challenge.prompt,
+      useAI: true,
+    });
+
+    if (result.selections && result.selections.length > 0) {
+      await this._clickTiles('hcaptcha', result.selections, challenge.challengeId);
+      this._solved.add(key);
+
+      const token = await this._waitForToken('hcaptcha');
+      if (token && this.options.autoClick) {
+        await this._clickSubmit();
+      }
+    }
+  }
+
+  async _handleRecaptchaChallenge(pageUrl) {
+    const challenge = await this._getRecaptchaChallenge();
+    if (!challenge) return;
+
+    const key = `recaptcha-challenge:${pageUrl}:${challenge.prompt}`;
+    if (this._solved.has(key)) return;
+
+    console.error('[DarkCaptcha] reCAPTCHA image challenge detected. Solving with AI...');
+
+    const tiles = challenge.tiles.filter(t => t != null);
+    if (tiles.length === 0) return;
+
+    const result = await DarkCaptcha.solve({
+      type: 'image',
+      images: tiles,
+      question: challenge.prompt,
+      useAI: true,
+    });
+
+    if (result.selections && result.selections.length > 0) {
+      await this._clickTiles('recaptcha', result.selections, challenge.challengeId);
+      this._solved.add(key);
+
+      const verified = await this._waitForChallengeComplete('recaptcha');
+      if (verified && this.options.autoClick) {
+        await this._clickSubmit();
+      }
+    }
+  }
+
+  async _getHCaptchaChallenge() {
     try {
-      const domInfo = await this.page.evaluate(() => {
-        const recaptcha = document.querySelector('textarea[name="g-recaptcha-response"]');
-        const hcaptcha = document.querySelector('textarea[name="h-captcha-response"]');
-        const turnstile = document.querySelector('textarea[name="cf-turnstile-response"]');
-        const sitekeyEl = document.querySelector('[data-sitekey], [data-site-key]');
-
-        return {
-          hasRecaptcha: !!recaptcha,
-          hasHcaptcha: !!hcaptcha,
-          hasTurnstile: !!turnstile,
-          sitekey: sitekeyEl?.getAttribute('data-sitekey') ||
-                  sitekeyEl?.getAttribute('data-site-key') || null,
-          recaptchaFilled: recaptcha?.value?.length > 0,
-          hcaptchaFilled: hcaptcha?.value?.length > 0,
-          turnstileFilled: turnstile?.value?.length > 0,
-        };
-      });
-
-      if (domInfo.hasRecaptcha && !domInfo.recaptchaFilled && domInfo.sitekey) {
-        const key = `recaptcha:${domInfo.sitekey}:${pageUrl}`;
-        if (!this._solved.has(key)) {
-          await this._solveOne({
-            type: 'recaptcha_v2', siteKey: domInfo.sitekey,
-            pageUrl, cacheKey: key,
+      for (const f of this.page.frames()) {
+        if (f.url().includes('hcaptcha.com')) {
+          const data = await f.evaluate(() => {
+            const promptEl = document.querySelector('.challenge-container .prompt, .task-description, [class*="prompt"]');
+            const prompt = promptEl?.textContent?.trim() || '';
+            const tiles = [];
+            document.querySelectorAll('.image-grid img, .image-grid canvas, .challenge-img, [class*="image"] img')
+              .forEach(el => {
+                const src = el.src || el.toDataURL?.();
+                if (src) tiles.push(src);
+              });
+            const challengeId = document.querySelector('[name="challengeKey"]')?.value ||
+                                document.querySelector('input[name="c"]')?.value || '';
+            return { prompt, tiles, challengeId };
           });
-        }
-      }
-
-      if (domInfo.hasHcaptcha && !domInfo.hcaptchaFilled && domInfo.sitekey) {
-        const key = `hcaptcha:${domInfo.sitekey}:${pageUrl}`;
-        if (!this._solved.has(key)) {
-          await this._solveOne({
-            type: 'hcaptcha', siteKey: domInfo.sitekey,
-            pageUrl, cacheKey: key,
-          });
-        }
-      }
-
-      if (domInfo.hasTurnstile && !domInfo.turnstileFilled && domInfo.sitekey) {
-        const key = `turnstile:${domInfo.sitekey}:${pageUrl}`;
-        if (!this._solved.has(key)) {
-          await this._solveOne({
-            type: 'turnstile', siteKey: domInfo.sitekey,
-            pageUrl, cacheKey: key,
-          });
+          if (data.tiles.length > 0 && data.prompt) return data;
         }
       }
     } catch {}
-  }
-
-  _detectType(src) {
-    if (src.includes('recaptcha')) return 'recaptcha_v2';
-    if (src.includes('hcaptcha')) return 'hcaptcha';
-    if (src.includes('turnstile')) return 'turnstile';
-    if (src.includes('funcaptcha') || src.includes('arkoselabs')) return 'funcaptcha';
-    const lo = src.toLowerCase();
-    if (lo.includes('recaptcha')) return 'recaptcha_v2';
-    return 'recaptcha_v2';
-  }
-
-  _extractSiteKey(src) {
-    const match = src.match(/[?&]k=([^&]+)/);
-    if (match) return decodeURIComponent(match[1]);
-    const match2 = src.match(/[?&]sitekey=([^&]+)/i);
-    if (match2) return decodeURIComponent(match2[1]);
-    const match3 = src.match(/[?&]key=([^&]+)/);
-    if (match3) return decodeURIComponent(match3[1]);
     return null;
   }
 
-  async _solveOne({ type, siteKey, pageUrl, cacheKey }) {
+  async _getRecaptchaChallenge() {
     try {
-      let result;
+      for (const f of this.page.frames()) {
+        if (f.url().includes('recaptcha/api2')) {
+          const data = await f.evaluate(() => {
+            const promptEl = document.querySelector('.rc-imageselect-desc, .rc-imageselect-instructions, [class*="rc-imageselect"] strong');
+            const prompt = promptEl?.textContent?.trim() || '';
+            const tiles = [];
+            document.querySelectorAll('.rc-image-tile-wrapper img, .rc-image-tile-wrapper canvas')
+              .forEach(el => {
+                const src = el.src || el.toDataURL?.();
+                if (src) tiles.push(src);
+              });
+            const challengeId = document.querySelector('[name="c"]')?.value || '';
+            return { prompt, tiles, challengeId };
+          });
+          if (data.tiles.length > 0 && data.prompt) return data;
+        }
+      }
+    } catch {}
+    return null;
+  }
 
-      if (this._solver) {
-        result = await this._solver.resolve({
-          type, siteKey, pageUrl,
-        });
-      } else {
-        result = await DarkCaptcha.solve({
-          type, siteKey, pageUrl,
-          ...(this.options.service ? { service: this.options.service } : {}),
-          ...(this.options.apiKey ? { apiKey: this.options.apiKey } : {}),
-        });
+  async _clickTiles(type, indices, challengeId) {
+    try {
+      const hostFrame = type === 'hcaptcha'
+        ? this.page.frameLocator('iframe[src*="hcaptcha.com"]').first()
+        : this.page.frameLocator('iframe[src*="recaptcha/api2"]').first();
+
+      for (const idx of indices) {
+        const tile = hostFrame.locator('.image-grid img, .challenge-img, .rc-image-tile-wrapper img').nth(idx);
+        if (await tile.isVisible().catch(() => false)) {
+          await tile.click();
+          await this.page.waitForTimeout(300);
+        }
       }
 
-      if (result.token || result.text) {
-        const token = result.token || result.text;
+      await this.page.waitForTimeout(500);
+
+      const submitBtn = type === 'hcaptcha'
+        ? hostFrame.locator('button[type="submit"], button:has-text("Verify"), #verifyButton')
+        : hostFrame.locator('#recaptcha-verify-button, button:has-text("Verify")');
+
+      if (await submitBtn.isVisible().catch(() => false)) {
+        await submitBtn.click();
+      }
+    } catch (err) {
+      console.error('[DarkCaptcha] Failed to click tiles:', err.message);
+    }
+  }
+
+  async _waitForToken(type) {
+    const sel = type === 'hcaptcha'
+      ? 'textarea[name="h-captcha-response"]'
+      : type === 'turnstile'
+      ? 'textarea[name="cf-turnstile-response"]'
+      : 'textarea[name="g-recaptcha-response"]';
+
+    for (let i = 0; i < 15; i++) {
+      const val = await this.page.evaluate((s) => document.querySelector(s)?.value, sel);
+      if (val && val.length > 10) return val;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    return null;
+  }
+
+  async _waitForChallengeComplete(type) {
+    for (let i = 0; i < 15; i++) {
+      const val = await this.page.evaluate(() => {
+        return document.querySelector('textarea[name="g-recaptcha-response"]')?.value || null;
+      });
+      if (val && val.length > 10) return true;
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    return false;
+  }
+
+  async _solveToken(type, siteKey, pageUrl, cacheKey) {
+    try {
+      const result = await DarkCaptcha.solve({ type, siteKey, pageUrl });
+
+      if (result.token) {
         await this.page.evaluate(({ t, tp }) => {
-          if (window.__darkcaptcha_setToken) {
-            window.__darkcaptcha_setToken(t, tp);
-          }
-        }, { t: token, tp: type });
+          if (window.__darkcaptcha_setToken) window.__darkcaptcha_setToken(t, tp);
+        }, { t: result.token, tp: type });
 
         this._solved.add(cacheKey);
 
         if (this.options.autoClick) {
-          await this.page.waitForTimeout(1000);
-          const btn = await this.page.$('button[type="submit"], input[type="submit"], ' +
-            'button:has-text("Continue"), button:has-text("Verify"), ' +
-            'button:has-text("Submit"), [class*="submit"], [class*="continue"]');
-          if (btn) {
-            try { await btn.click(); } catch {}
-          }
+          await this.page.waitForTimeout(800);
+          await this._clickSubmit();
         }
       }
     } catch (err) {
       this._solved.add(cacheKey);
     }
+  }
+
+  async _clickSubmit() {
+    try {
+      const btn = await this.page.$(
+        'button[type="submit"], input[type="submit"], ' +
+        'button:has-text("Continue"), button:has-text("Verify"), ' +
+        'button:has-text("Submit"), button:has-text("Register"), ' +
+        'button:has-text("Sign Up"), [class*="submit"], [class*="continue"]'
+      );
+      if (btn) await btn.click();
+    } catch {}
   }
 }
 
