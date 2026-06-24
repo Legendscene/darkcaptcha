@@ -9,6 +9,7 @@
   "files": [
     "index.js",
     "cli.js",
+    "README.md",
     "src/",
     "bin/"
   ],

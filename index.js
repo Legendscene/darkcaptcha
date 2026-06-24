@@ -49,4 +49,10 @@ DarkCaptcha.TwoCaptchaService = TwoCaptchaService;
 DarkCaptcha.AntiCaptchaService = AntiCaptchaService;
 DarkCaptcha.CapSolverService = CapSolverService;
 
+try {
+  const { autoSolve, CaptchaWatchdog } = require('./src/integrations/playwright');
+  DarkCaptcha.autoSolve = autoSolve;
+  DarkCaptcha.CaptchaWatchdog = CaptchaWatchdog;
+} catch {}
+
 module.exports = DarkCaptcha;

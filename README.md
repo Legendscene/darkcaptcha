@@ -287,6 +287,84 @@ const result = await DarkCaptcha.solve({
 
 ---
 
+## 🤖 Auto-Solve (Playwright Integration)
+
+DarkCaptcha can **automatically detect and solve captchas** on any page without writing per-site logic. It watches for reCAPTCHA, hCaptcha, Turnstile, and FunCAPTCHA iframes, extracts site keys, solves them, and injects the token — all automatically.
+
+### Simple auto-solve
+
+```js
+const { chromium } = require('playwright');
+const { autoSolve } = require('darkcaptcha');
+
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage();
+
+  // Start auto-solve watchdog (watches for captchas automatically)
+  const watchdog = await autoSolve(page, {
+    service: '2captcha',
+    apiKey: 'your-api-key',
+  });
+
+  await page.goto('https://example.com/signup');
+  // Captchas are solved automatically — no extra code needed
+
+  // ... fill form, click submit, etc.
+
+  await watchdog.stop();
+  await browser.close();
+})();
+```
+
+### Discord account creation example
+
+```js
+const { chromium } = require('playwright');
+const { autoSolve } = require('darkcaptcha');
+
+(async () => {
+  const browser = await chromium.launch({ headless: false });
+  const page = await browser.newPage();
+
+  const watchdog = await autoSolve(page, {
+    service: '2captcha',      // ← required for hCaptcha (Discord uses hCaptcha)
+    apiKey: 'YOUR_2CAPTCHA_KEY',
+    autoClick: true,           // auto-clicks submit after solving
+  });
+
+  await page.goto('https://discord.com/register');
+
+  // Fill registration form
+  await page.fill('input[name="email"]', 'email@example.com');
+  await page.fill('input[name="username"]', 'MyUsername');
+  await page.fill('input[name="password"]', 'SecurePass123');
+  await page.fill('input[name="dateOfBirth"]', '2000-01-01');
+
+  // Click Continue — captcha appears, watchdog auto-solves it
+  await page.click('button[type="submit"]');
+
+  // The watchdog detects the hCaptcha iframe, extracts site key,
+  // sends to 2captcha, waits for solution, injects the token,
+  // and clicks submit — all automatically.
+
+  await page.waitForTimeout(15000); // wait for verification
+  await watchdog.stop();
+  await browser.close();
+})();
+```
+
+### How it works
+
+1. **Interceptor** — injects a script that monitors for captcha iframes and DOM elements
+2. **Polling** — checks every 2 seconds for new captchas
+3. **Detection** — identifies captcha type (reCAPTCHA, hCaptcha, etc.) and extracts site key
+4. **Solving** — calls DarkCaptcha.solve() with the detected parameters
+5. **Injection** — sets the token in the appropriate textarea and triggers callbacks
+6. **Auto-submit** — optionally clicks the submit/continue button after solving
+
+> **Note:** Auto-solve requires Playwright installed (`npm install playwright && npx playwright install chromium`) and an external solving service for non-text captchas.
+
 ## ⚠️ Error Handling
 
 ```js
