@@ -92,6 +92,15 @@ class AntiCaptchaService extends BaseCaptchaService {
       };
     }
 
+    if (config.type === 'TurnstileTaskProxyless') {
+      return {
+        type: 'TurnstileTaskProxyless',
+        websiteURL: pageUrl,
+        websiteKey: siteKey,
+        ...rest,
+      };
+    }
+
     return {
       type: 'NoCaptchaTaskProxyless',
       websiteURL: pageUrl,

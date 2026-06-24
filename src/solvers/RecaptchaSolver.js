@@ -1,4 +1,5 @@
 const BaseSolver = require('../core/BaseSolver');
+const { ServiceError } = require('../core/errors');
 
 class RecaptchaSolver extends BaseSolver {
   static type = 'recaptcha_v2';
@@ -60,7 +61,7 @@ class RecaptchaSolver extends BaseSolver {
         service = new CapSolverService(config.apiKey || this.options.apiKey);
         break;
       default:
-        throw new Error(`No service configured for reCAPTCHA solving`);
+        throw new ServiceError('No service configured for reCAPTCHA solving. Set service + apiKey in config.', 'RecaptchaSolver');
     }
 
     return service.solve({

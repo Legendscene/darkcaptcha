@@ -97,10 +97,12 @@ class MathSolver extends BaseSolver {
       }
     }
 
-    const answer = Number.isInteger(result) ? result : Math.round(result * 100) / 100;
+    const answer = result !== null
+      ? (Number.isInteger(result) ? String(result) : String(Math.round(result * 100) / 100))
+      : null;
 
     return {
-      answer: answer !== null ? String(answer) : null,
+      answer,
       method,
       expression: config.expression || expression,
       solver: 'MathSolver',

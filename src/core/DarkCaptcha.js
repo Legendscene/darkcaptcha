@@ -66,7 +66,13 @@ class DarkCaptcha {
     ];
 
     for (const solver of solvers) {
-      this._solvers.set(solver.constructor.type, solver);
+      const type = solver.constructor.type;
+      this._solvers.set(type, solver);
+      if (solver.constructor.types) {
+        for (const alias of solver.constructor.types) {
+          if (alias !== type) this._solvers.set(alias, solver);
+        }
+      }
     }
   }
 

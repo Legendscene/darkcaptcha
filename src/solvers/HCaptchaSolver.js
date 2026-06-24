@@ -1,4 +1,5 @@
 const BaseSolver = require('../core/BaseSolver');
+const { ServiceError } = require('../core/errors');
 
 class HCaptchaSolver extends BaseSolver {
   static type = 'hcaptcha';
@@ -30,7 +31,7 @@ class HCaptchaSolver extends BaseSolver {
 
   async _solveViaService(config, siteKey, pageUrl) {
     const ServiceClass = this._getServiceClass(config.service);
-    if (!ServiceClass) throw new Error('No captcha service configured');
+    if (!ServiceClass) throw new ServiceError('No captcha service configured. Set service + apiKey in config.', 'HCaptchaSolver');
     const svc = new ServiceClass(config.apiKey || this.options.apiKey);
     return svc.solve({ type: 'HCaptchaTaskProxyless', siteKey, pageUrl });
   }

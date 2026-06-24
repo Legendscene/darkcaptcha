@@ -16,7 +16,7 @@ class PuzzleSolver extends BaseSolver {
       image: config.image,
       buffer: config.buffer,
       pageUrl: config.pageUrl,
-      selector: config.selector || '.puzzle-captcha',
+      selector: config.selector,
     });
 
     return {

@@ -2,6 +2,7 @@ const Jimp = require('jimp');
 const path = require('path');
 const fs = require('fs');
 const BaseSolver = require('../core/BaseSolver');
+const { SolverError } = require('../core/errors');
 
 class SliderSolver extends BaseSolver {
   static type = 'slider';
@@ -32,7 +33,7 @@ class SliderSolver extends BaseSolver {
   async _loadImage(config) {
     if (config.buffer) return config.buffer;
     if (config.image) return fs.readFileSync(path.resolve(config.image));
-    throw new Error('No image provided for slider captcha');
+    throw new SolverError('No image provided for slider captcha', 'SliderSolver');
   }
 
   async _findGap(buffer) {

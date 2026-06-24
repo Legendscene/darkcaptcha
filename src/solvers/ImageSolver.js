@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const BaseSolver = require('../core/BaseSolver');
 
 class ImageSolver extends BaseSolver {
@@ -20,9 +22,10 @@ class ImageSolver extends BaseSolver {
       const ServiceClass = this._getServiceClass(service);
       if (ServiceClass) {
         const svc = new ServiceClass(apiKey);
+        const bodies = await Promise.all(imageList.map(img => this._toBase64(img)));
         return svc.solve({
           type: 'ImageToTextTask',
-          body: imageList,
+          body: bodies.length === 1 ? bodies[0] : bodies,
           question: questionText,
           grid: grid || '3x3',
         });
@@ -44,6 +47,13 @@ class ImageSolver extends BaseSolver {
       method: result.method || 'browser',
       confidence: 65,
     };
+  }
+
+  async _toBase64(input) {
+    if (Buffer.isBuffer(input)) return input.toString('base64');
+    if (input.startsWith('data:')) return input.split(',')[1] || input;
+    if (input.startsWith('http://') || input.startsWith('https://')) return input;
+    return fs.readFileSync(path.resolve(input)).toString('base64');
   }
 
   _getServiceClass(name) {

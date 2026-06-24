@@ -1,4 +1,5 @@
 const BaseSolver = require('../core/BaseSolver');
+const { SolverError } = require('../core/errors');
 
 class AudioSolver extends BaseSolver {
   static type = 'audio';
@@ -18,31 +19,12 @@ class AudioSolver extends BaseSolver {
       }
     }
 
-    const text = await this._transcribeAudio(audio);
-
-    return {
-      text,
-      solver: 'AudioSolver',
-      method: 'local',
-      confidence: 50,
-    };
-  }
-
-  async _transcribeAudio(audioPath) {
-    const fs = require('fs');
-    const path = require('path');
-    const audioBuffer = audioPath
-      ? fs.readFileSync(path.resolve(audioPath))
-      : null;
-
-    if (!audioBuffer) {
-      throw new Error('Audio transcription requires external service (2captcha/anticaptcha/capsolver) or audio file');
-    }
-
-    throw new Error(
-      'Audio transcription not available locally. ' +
-      'Configure an external captcha service: ' +
-      'new DarkCaptcha({ service: "2captcha", apiKey: "..." })'
+    throw new SolverError(
+      'Audio captcha requires an external service. Configure one:\n' +
+      '  new DarkCaptcha({ service: "2captcha", apiKey: "..." })\n' +
+      '  OR\n' +
+      '  DarkCaptcha.solve({ type: "audio", audio: "file.mp3", service: "2captcha", apiKey: "..." })',
+      'AudioSolver'
     );
   }
 
