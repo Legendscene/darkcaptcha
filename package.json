@@ -1,0 +1,59 @@
+{
+  "name": "darkcaptcha",
+  "version": "1.0.0",
+  "description": "Universal CAPTCHA solver — text, image, audio, reCAPTCHA, hCaptcha, FunCAPTCHA, Turnstile, math, puzzle, slider, and more",
+  "main": "index.js",
+  "bin": {
+    "darkcaptcha": "bin/darkcaptcha.js"
+  },
+  "files": [
+    "index.js",
+    "cli.js",
+    "src/",
+    "bin/"
+  ],
+  "scripts": {
+    "test": "node -e \"require('./index.js'); console.log('OK')\"",
+    "prepublishOnly": "npm test"
+  },
+  "keywords": [
+    "captcha",
+    "recaptcha",
+    "hcaptcha",
+    "funcaptcha",
+    "turnstile",
+    "captcha-solver",
+    "captcha-solving",
+    "ocr",
+    "captcha-killer",
+    "bypass-captcha",
+    "automation"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Legendscene/darkcaptcha.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Legendscene/darkcaptcha/issues"
+  },
+  "homepage": "https://github.com/Legendscene/darkcaptcha#readme",
+  "author": "Pranshu",
+  "license": "MIT",
+  "dependencies": {
+    "tesseract.js": "^5.1.1",
+    "jimp": "^0.22.12",
+    "axios": "^1.7.2",
+    "commander": "^12.1.0"
+  },
+  "peerDependencies": {
+    "playwright": "^1.45.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
