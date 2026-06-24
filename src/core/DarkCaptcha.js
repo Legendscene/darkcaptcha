@@ -1,5 +1,3 @@
-const path = require('path');
-const fs = require('fs');
 const Detector = require('../detectors/Detector');
 const TextSolver = require('../solvers/TextSolver');
 const MathSolver = require('../solvers/MathSolver');
@@ -101,27 +99,33 @@ class DarkCaptcha {
   }
 
   async resolve(config = {}) {
-    const type = config.type || this.options.defaultType || 'auto';
+    const merged = { ...this.options, ...config };
+    const type = merged.type || 'auto';
 
     if (type === 'auto') {
       return this._autoSolve(config);
     }
 
-    return this._solveWithType(type, config);
+    return this._solveLocal(type, config, merged);
   }
 
   async _autoSolve(config) {
     const detector = new Detector();
     const detection = await detector.detect(config);
 
-    if (this._service && detection.serviceRequired !== false) {
-      return this._solveViaService(config, detection);
+    try {
+      return await this._solveLocal(detection.type, { ...config, ...detection });
+    } catch (localErr) {
+      if (this._service) {
+        try {
+          return await this._service.solve({ ...config, ...detection });
+        } catch {}
+      }
+      throw localErr;
     }
-
-    return this._solveWithType(detection.type, { ...config, ...detection });
   }
 
-  async _solveWithType(type, config) {
+  async _solveLocal(type, config, merged) {
     const solver = this._solvers.get(type);
     if (!solver) {
       throw new UnsupportedCaptchaError(type);
@@ -131,19 +135,8 @@ class DarkCaptcha {
       return await solver.solve(config);
     } catch (err) {
       if (err instanceof DarkCaptchaError) throw err;
-      throw new SolverError(
-        `Solver ${type} failed: ${err.message}`,
-        type,
-        err
-      );
+      throw new SolverError(`Solver ${type} failed: ${err.message}`, type, err);
     }
-  }
-
-  async _solveViaService(config, detection) {
-    if (!this._service) {
-      throw new DarkCaptchaError('No external service configured', 'NO_SERVICE');
-    }
-    return this._service.solve({ ...config, ...detection });
   }
 
   listSolvers() {

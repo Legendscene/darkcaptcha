@@ -7,74 +7,85 @@ class RecaptchaSolver extends BaseSolver {
 
   canSolve(config) {
     return RecaptchaSolver.types.includes(config.type) ||
-      (config.siteKey && config.pageUrl &&
-       /6L[e-z]/i.test(config.siteKey));
+      (config.siteKey && config.pageUrl && /6L[e-z]/i.test(config.siteKey));
   }
 
   async solve(config) {
-    const { siteKey, pageUrl, service, apiKey } = { ...this.options, ...config };
+    const merged = { ...this.options, ...config };
     const version = config.type === 'recaptcha_v3' ? 'v3' : 'v2';
-    const action = config.action || 'verify';
-    const minScore = config.minScore || 0.3;
 
-    if (service) {
-      const result = await this._solveViaService(config, siteKey, pageUrl, version);
-      return result;
+    if (merged.service) {
+      return this._solveViaService(merged, version);
     }
 
-    const { BrowserAutomation } = require('../browser/BrowserAutomation');
-    const browser = new BrowserAutomation(this.options);
-    const result = await browser.solveRecaptcha({
-      siteKey,
-      pageUrl,
-      version,
-      action,
-      minScore,
-    });
-
-    return {
-      token: result.token,
-      version,
-      solver: 'RecaptchaSolver',
-      method: result.method || (service ? 'service' : 'browser'),
-      confidence: 85,
-    };
+    return this._solveLocal(merged, version);
   }
 
-  async _solveViaService(config, siteKey, pageUrl, version) {
+  async _solveLocal(config, version) {
+    const { BrowserAutomation } = require('../browser/BrowserAutomation');
+    const browser = new BrowserAutomation(this.options);
+    try {
+      const result = await browser.solveRecaptcha({
+        siteKey: config.siteKey,
+        pageUrl: config.pageUrl,
+        version,
+        action: config.action || 'verify',
+        minScore: config.minScore || 0.3,
+      });
+
+      if (!result.token) {
+        throw new Error('Could not obtain reCAPTCHA token via browser automation');
+      }
+
+      return {
+        token: result.token,
+        version,
+        solver: 'RecaptchaSolver',
+        method: 'browser',
+        confidence: 85,
+      };
+    } finally {
+      await browser.close();
+    }
+  }
+
+  async _solveViaService(config, version) {
     const TwoCaptchaService = require('../services/TwoCaptchaService');
     const AntiCaptchaService = require('../services/AntiCaptchaService');
     const CapSolverService = require('../services/CapSolverService');
 
-    const merged = { ...this.options, ...config };
-    const serviceName = merged.service;
+    const serviceName = config.service;
 
     let service;
     switch (serviceName?.toLowerCase()) {
       case '2captcha':
-        service = new TwoCaptchaService(config.apiKey || this.options.apiKey);
+        service = new TwoCaptchaService(config.apiKey);
         break;
       case 'anticaptcha':
-        service = new AntiCaptchaService(config.apiKey || this.options.apiKey);
+        service = new AntiCaptchaService(config.apiKey);
         break;
       case 'capsolver':
-        service = new CapSolverService(config.apiKey || this.options.apiKey);
+        service = new CapSolverService(config.apiKey);
         break;
       default:
-        throw new ServiceError('No service configured for reCAPTCHA solving. Set service + apiKey in config.', 'RecaptchaSolver');
+        throw new ServiceError(
+          'No service configured for reCAPTCHA solving. ' +
+          'Either install Playwright (npm install playwright) or set service + apiKey.',
+          'RecaptchaSolver'
+        );
     }
+
+    const taskParams = {
+      siteKey: config.siteKey,
+      pageUrl: config.pageUrl,
+    };
 
     return service.solve({
       type: version === 'v3' ? 'RecaptchaV3TaskProxyless' : 'RecaptchaV2TaskProxyless',
-      siteKey,
-      pageUrl,
-      action: merged.action || 'verify',
-      minScore: merged.minScore || 0.3,
+      ...taskParams,
+      action: config.action || 'verify',
+      minScore: config.minScore || 0.3,
     });
-  }
-
-  getConfidence() {
-    return 85;
   }
 }
 

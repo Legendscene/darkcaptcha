@@ -11,39 +11,65 @@ class HCaptchaSolver extends BaseSolver {
   }
 
   async solve(config) {
-    const { siteKey, pageUrl, service, apiKey } = { ...this.options, ...config };
+    const merged = { ...this.options, ...config };
 
-    if (service) {
-      return this._solveViaService(config, siteKey, pageUrl);
+    if (merged.service) {
+      return this._solveViaService(merged);
     }
 
+    return this._solveLocal(merged);
+  }
+
+  async _solveLocal(config) {
     const { BrowserAutomation } = require('../browser/BrowserAutomation');
     const browser = new BrowserAutomation(this.options);
-    const result = await browser.solveHCaptcha({ siteKey, pageUrl });
+    try {
+      const result = await browser.solveHCaptcha({
+        siteKey: config.siteKey,
+        pageUrl: config.pageUrl,
+      });
 
-    return {
-      token: result.token,
-      solver: 'HCaptchaSolver',
-      method: result.method || 'browser',
-      confidence: 80,
-    };
+      if (!result.token) {
+        throw new Error('Could not obtain hCaptcha token via browser automation');
+      }
+
+      return {
+        token: result.token,
+        solver: 'HCaptchaSolver',
+        method: 'browser',
+        confidence: 80,
+      };
+    } finally {
+      await browser.close();
+    }
   }
 
-  async _solveViaService(config, siteKey, pageUrl) {
-    const ServiceClass = this._getServiceClass(config.service);
-    if (!ServiceClass) throw new ServiceError('No captcha service configured. Set service + apiKey in config.', 'HCaptchaSolver');
-    const svc = new ServiceClass(config.apiKey || this.options.apiKey);
-    return svc.solve({ type: 'HCaptchaTaskProxyless', siteKey, pageUrl });
-  }
+  async _solveViaService(config) {
+    const TwoCaptchaService = require('../services/TwoCaptchaService');
+    const AntiCaptchaService = require('../services/AntiCaptchaService');
+    const CapSolverService = require('../services/CapSolverService');
 
-  _getServiceClass(name) {
-    const map = {
-      '2captcha': '../services/TwoCaptchaService',
-      'anticaptcha': '../services/AntiCaptchaService',
-      'capsolver': '../services/CapSolverService',
-    };
-    if (!name || !map[name.toLowerCase()]) return null;
-    return require(map[name.toLowerCase()]);
+    const serviceName = config.service;
+    let ServiceClass;
+
+    switch (serviceName?.toLowerCase()) {
+      case '2captcha': ServiceClass = TwoCaptchaService; break;
+      case 'anticaptcha': ServiceClass = AntiCaptchaService; break;
+      case 'capsolver': ServiceClass = CapSolverService; break;
+      default:
+        throw new ServiceError(
+          'No captcha service configured for hCaptcha. ' +
+          'Install Playwright (npm install playwright) or set service + apiKey.',
+          'HCaptchaSolver'
+        );
+    }
+
+    const svc = new ServiceClass(config.apiKey);
+    return svc.solve({
+      type: 'HCaptchaTaskProxyless',
+      siteKey: config.siteKey,
+      pageUrl: config.pageUrl,
+    });
   }
 }
 

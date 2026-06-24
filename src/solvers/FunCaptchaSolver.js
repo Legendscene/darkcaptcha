@@ -4,48 +4,57 @@ class FunCaptchaSolver extends BaseSolver {
   static type = 'funcaptcha';
 
   canSolve(config) {
-    return config.type === 'funcaptcha' ||
-      (config.siteKey && config.pageUrl && /[A-Z0-9]{32}/i.test(config.siteKey));
+    return config.type === 'funcaptcha';
   }
 
   async solve(config) {
-    const { siteKey, pageUrl, service, apiKey, publicKey, surl } = { ...this.options, ...config };
-    const serviceUrl = surl || 'https://client-api.arkoselabs.com';
-    const pk = publicKey || siteKey;
+    const merged = { ...this.options, ...config };
 
-    if (service) {
-      const ServiceClass = this._getServiceClass(service);
-      if (ServiceClass) {
-        const svc = new ServiceClass(apiKey);
-        return svc.solve({
-          type: 'FunCaptchaTaskProxyless',
-          websiteURL: pageUrl,
-          websitePublicKey: pk,
-          funcaptchaApiJSURL: serviceUrl,
-        });
-      }
+    if (merged.service) {
+      return this._solveViaService(merged);
     }
 
-    const { BrowserAutomation } = require('../browser/BrowserAutomation');
-    const browser = new BrowserAutomation(this.options);
-    const result = await browser.solveFunCaptcha({ siteKey: pk, pageUrl, surl: serviceUrl });
-
-    return {
-      token: result.token,
-      solver: 'FunCaptchaSolver',
-      method: result.method || 'browser',
-      confidence: 75,
-    };
+    return this._solveLocal(merged);
   }
 
-  _getServiceClass(name) {
+  async _solveLocal(config) {
+    const { BrowserAutomation } = require('../browser/BrowserAutomation');
+    const browser = new BrowserAutomation(this.options);
+    try {
+      const result = await browser.solveFunCaptcha({
+        siteKey: config.siteKey,
+        pageUrl: config.pageUrl,
+        surl: config.surl,
+      });
+
+      return {
+        token: result.token,
+        solver: 'FunCaptchaSolver',
+        method: 'browser',
+        confidence: 75,
+      };
+    } finally {
+      await browser.close();
+    }
+  }
+
+  async _solveViaService(config) {
+    const serviceName = config.service;
     const map = {
       '2captcha': '../services/TwoCaptchaService',
       'anticaptcha': '../services/AntiCaptchaService',
       'capsolver': '../services/CapSolverService',
     };
-    if (!name || !map[name.toLowerCase()]) return null;
-    return require(map[name.toLowerCase()]);
+    const path = map[serviceName?.toLowerCase()];
+    if (!path) throw new Error('No service configured for FunCAPTCHA');
+    const ServiceClass = require(path);
+    const svc = new ServiceClass(config.apiKey);
+    return svc.solve({
+      type: 'FunCaptchaTaskProxyless',
+      websiteURL: config.pageUrl,
+      websitePublicKey: config.siteKey,
+      funcaptchaApiJSURL: config.surl || 'https://client-api.arkoselabs.com',
+    });
   }
 }
 

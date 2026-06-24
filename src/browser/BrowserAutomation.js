@@ -1,272 +1,321 @@
 const { BrowserError } = require('../core/errors');
+const { transcribeAudio } = require('../utils/audioTranscriber');
 
 class BrowserAutomation {
   constructor(options = {}) {
     this.options = options;
     this.browser = null;
-    this._playwright = null;
   }
 
   async _ensureBrowser() {
     if (this.browser) return;
     try {
       const { chromium } = require('playwright');
-      this._playwright = chromium;
       this.browser = await chromium.launch({
         headless: this.options.headless !== false,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
     } catch (err) {
       throw new BrowserError(
-        'Playwright is required for browser-based captcha solving. ' +
-        'Install it: npm install playwright && npx playwright install chromium. ' +
-        'Alternatively, configure an external service: new DarkCaptcha({ service: "2captcha", apiKey: "..." })',
+        'Playwright is required for browser captcha solving.\n' +
+        'Install: npm install playwright && npx playwright install chromium',
         'playwright'
       );
     }
   }
 
-  async solveRecaptcha({ siteKey, pageUrl, version = 'v2', action = 'verify', minScore = 0.3 }) {
+  async _createPage() {
     await this._ensureBrowser();
     const context = await this.browser.newContext({
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36',
     });
-    const page = await context.newPage();
+    return { page: await context.newPage(), context };
+  }
 
+  async _cleanup(context) {
+    try { await context.close(); } catch {}
+  }
+
+  async solveRecaptcha({ siteKey, pageUrl, version = 'v2' }) {
+    const { page, context } = await this._createPage();
     try {
       await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
 
       if (version === 'v2') {
-        const frame = page.frameLocator('iframe[src*="recaptcha"]').first();
-        await frame.locator('.recaptcha-checkbox-border').click({ timeout: 10000 });
-        await page.waitForTimeout(3000);
+        const frame = page.frameLocator('iframe[src*="recaptcha/api2"]').first();
+        try {
+          await frame.locator('.recaptcha-checkbox-border').click({ timeout: 8000 });
+          await page.waitForTimeout(2000);
+        } catch {
+          const allFrames = page.frameLocator('iframe[src*="recaptcha"]');
+          try {
+            await allFrames.first().locator('.recaptcha-checkbox-border').click({ timeout: 3000 });
+            await page.waitForTimeout(2000);
+          } catch {}
+        }
       }
 
-      const token = await page.evaluate(() => {
-        return document.querySelector('textarea[name="g-recaptcha-response"]')?.value ||
-               document.querySelector('#g-recaptcha-response')?.value ||
-               (window.___grecaptcha_cfg && window.___grecaptcha_cfg.clients &&
-                Object.values(window.___grecaptcha_cfg.clients)[0]?.getResponse());
+      let token = await page.evaluate(() => {
+        const ta = document.querySelector('textarea[name="g-recaptcha-response"]');
+        if (ta?.value) return ta.value;
+        const clients = window.___grecaptcha_cfg?.clients;
+        if (clients) {
+          for (const id of Object.keys(clients)) {
+            const val = clients[id]?.getResponse();
+            if (val) return val;
+          }
+        }
+        return null;
       });
 
+      if (!token && version === 'v2') {
+        token = await this._tryRecaptchaAudioChallenge(page);
+      }
+
       if (!token) {
-        throw new BrowserError('Could not obtain reCAPTCHA token automatically. ' +
-          'Try using an external service like 2captcha.');
+        throw new BrowserError(
+          'Could not get reCAPTCHA token. Try:\n' +
+          '  1. Set service + apiKey for external solving\n' +
+          '  2. Make sure the page fully loaded before calling solve()'
+        );
       }
 
       return { token, method: 'browser' };
     } finally {
-      await page.close();
-      await context.close();
+      await this._cleanup(context);
     }
+  }
+
+  async _tryRecaptchaAudioChallenge(page) {
+    try {
+      const challengeFrame = page.frameLocator('iframe[src*="recaptcha/api2"]').first();
+      const audioBtn = challengeFrame.locator('#recaptcha-audio-button');
+      if (await audioBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await audioBtn.click();
+        await page.waitForTimeout(2000);
+
+        const audioSrc = await challengeFrame.evaluate(() => {
+          const audio = document.querySelector('#audio-source');
+          return audio?.src || null;
+        });
+
+        if (audioSrc) {
+          const response = await page.context().request.get(audioSrc);
+          const audioBuffer = await response.body();
+          const result = await transcribeAudio(audioBuffer);
+
+          if (result.text) {
+            const input = challengeFrame.locator('#audio-response');
+            await input.fill(result.text);
+            await challengeFrame.locator('#recaptcha-verify-button').click();
+            await page.waitForTimeout(3000);
+
+            return await page.evaluate(() => {
+              const ta = document.querySelector('textarea[name="g-recaptcha-response"]');
+              return ta?.value || null;
+            });
+          }
+        }
+      }
+    } catch {}
+    return null;
   }
 
   async solveHCaptcha({ siteKey, pageUrl }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
+    const { page, context } = await this._createPage();
     try {
       await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      const frame = page.frameLocator('iframe[src*="hcaptcha"]').first();
-      await frame.locator('#checkbox').click({ timeout: 10000 });
-      await page.waitForTimeout(3000);
+
+      const frame = page.frameLocator('iframe[src*="hcaptcha.com"]').first();
+      try {
+        await frame.locator('#checkbox').click({ timeout: 8000 });
+        await page.waitForTimeout(2000);
+      } catch {
+        try {
+          await frame.locator('.hcaptcha-box').click({ timeout: 3000 });
+          await page.waitForTimeout(2000);
+        } catch {}
+      }
 
       const token = await page.evaluate(() => {
-        return document.querySelector('textarea[name="h-captcha-response"]')?.value;
+        return document.querySelector('textarea[name="h-captcha-response"]')?.value || null;
       });
 
       if (!token) {
-        throw new BrowserError('Could not obtain hCaptcha token automatically.');
+        token = await this._tryHCaptchaAudioChallenge(page);
+      }
+
+      if (!token) {
+        throw new BrowserError(
+          'Could not get hCaptcha token. Try:\n' +
+          '  1. The page might require image selection (needs external service)\n' +
+          '  2. Set service + apiKey for external solving'
+        );
       }
 
       return { token, method: 'browser' };
     } finally {
-      await page.close();
-      await context.close();
+      await this._cleanup(context);
     }
   }
 
-  async solveFunCaptcha({ siteKey, pageUrl, surl }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
+  async _tryHCaptchaAudioChallenge(page) {
+    try {
+      const frame = page.frameLocator('iframe[src*="hcaptcha.com"]').first();
+      const audioBtn = frame.locator('#audioButton, [aria-label="audio"], .audio-control');
+      if (await audioBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await audioBtn.click();
+        await page.waitForTimeout(2000);
+        const audioSrc = await frame.evaluate(() => {
+          const el = document.querySelector('audio source, audio');
+          return el?.src || el?.currentSrc || null;
+        });
+        if (audioSrc) {
+          const response = await page.context().request.get(audioSrc);
+          const buf = await response.body();
+          const result = await transcribeAudio(buf);
+          if (result.text) {
+            const input = frame.locator('#audioResponse, input[placeholder*="answer"]');
+            await input.fill(result.text);
+            await frame.locator('#verifyButton, button:has-text("Verify")').click();
+            await page.waitForTimeout(3000);
+            return await page.evaluate(() =>
+              document.querySelector('textarea[name="h-captcha-response"]')?.value || null
+            );
+          }
+        }
+      }
+    } catch {}
+    return null;
+  }
 
+  async solveFunCaptcha({ siteKey, pageUrl, surl }) {
+    const { page, context } = await this._createPage();
     try {
       await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
 
-      const frames = page.frames();
-      for (const frame of frames) {
-        if (frame.url().includes('arkoselabs') || frame.url().includes('funcaptcha')) {
+      for (const frame of page.frames()) {
+        const url = frame.url();
+        if (url.includes('arkoselabs') || url.includes('funcaptcha')) {
+          await page.waitForTimeout(2000);
           const token = await frame.evaluate(() => {
-            return document.querySelector('input[name="fc-token"]')?.value;
+            const el = document.querySelector('input[name="fc-token"]');
+            return el?.value || null;
           });
           if (token) return { token, method: 'browser' };
         }
       }
-
-      throw new BrowserError('Could not obtain FunCAPTCHA token automatically.');
+      throw new BrowserError('Could not obtain FunCAPTCHA token');
     } finally {
-      await page.close();
-      await context.close();
+      await this._cleanup(context);
     }
   }
 
   async solveTurnstile({ siteKey, pageUrl }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
+    const { page, context } = await this._createPage();
     try {
       await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
+      await page.waitForTimeout(2000);
 
       const token = await page.evaluate(() => {
         const input = document.querySelector('input[name="cf-turnstile-response"]');
-        return input?.value;
+        return input?.value || null;
       });
 
       if (!token) {
-        throw new BrowserError('Could not obtain Turnstile token automatically.');
+        throw new BrowserError('Could not obtain Turnstile token');
       }
 
       return { token, method: 'browser' };
     } finally {
-      await page.close();
-      await context.close();
+      await this._cleanup(context);
     }
   }
 
-  async solveImageCaptcha({ images, question, pageUrl }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
+  async solveSlider(page, { distance, trackWidth }) {
     try {
-      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
+      const slider = await page.$('[class*="slide"], [class*="slider"], [class*="drag"], .nc_iconfont');
+      if (!slider) throw new BrowserError('Slider element not found');
 
-      const selections = await page.evaluate((q) => {
-        const tiles = document.querySelectorAll('[class*="image"], [class*="tile"], [class*="grid"] img');
-        return Array.from(tiles).slice(0, 9).map((_, i) => i);
-      }, question);
+      const box = await slider.boundingBox();
+      if (!box) throw new BrowserError('Could not get slider bounds');
 
-      return { selections, method: 'browser' };
-    } finally {
-      await page.close();
-      await context.close();
-    }
-  }
+      const startX = box.x + box.width / 2;
+      const startY = box.y + box.height / 2;
 
-  async solvePuzzle({ image, buffer, pageUrl, selector }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
 
-    try {
-      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
-
-      const handle = await page.$(selector);
-      if (!handle) throw new BrowserError(`Puzzle element not found: ${selector}`);
-
-      const box = await handle.boundingBox();
-      if (!box) throw new BrowserError('Could not get puzzle element bounds');
-
-      return { coordinates: { x: box.x + box.width / 2, y: box.y + box.height / 2 }, method: 'browser' };
-    } finally {
-      await page.close();
-      await context.close();
-    }
-  }
-
-  async solveCoordinate({ image, pageUrl, instruction, selector }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
-    try {
-      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      await page.waitForTimeout(2000);
-
-      return { coordinates: null, method: 'browser', note: 'Coordinate captcha requires external service for automatic solving' };
-    } finally {
-      await page.close();
-      await context.close();
-    }
-  }
-
-  async solveRotate({ image, buffer, pageUrl, selector }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
-    try {
-      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      return { angle: 0, steps: [], method: 'browser', note: 'Rotate captcha requires manual or AI-based angle detection' };
-    } finally {
-      await page.close();
-      await context.close();
-    }
-  }
-
-  async solveDragDrop({ image, pageUrl, sourceSelector, targetSelector, instruction }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
-    try {
-      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
-
-      const source = sourceSelector ? await page.$(sourceSelector) : null;
-      const target = targetSelector ? await page.$(targetSelector) : null;
-
-      if (source && target) {
-        const srcBox = await source.boundingBox();
-        const tgtBox = await target.boundingBox();
-        if (srcBox && tgtBox) {
-          await page.mouse.move(srcBox.x + srcBox.width / 2, srcBox.y + srcBox.height / 2);
-          await page.mouse.down();
-          await page.mouse.move(tgtBox.x + tgtBox.width / 2, tgtBox.y + tgtBox.height / 2, { steps: 30 });
-          await page.mouse.up();
-          return { actions: [{ type: 'drag', from: srcBox, to: tgtBox }], method: 'browser' };
-        }
+      const steps = Math.min(50, Math.max(10, Math.floor(distance / 2)));
+      for (let i = 1; i <= steps; i++) {
+        const progress = i / steps;
+        const ease = 1 - Math.pow(1 - progress, 3);
+        const x = startX + distance * ease;
+        const y = startY + Math.sin(progress * Math.PI * 2) * 2;
+        await page.mouse.move(x, y);
+        await page.waitForTimeout(10);
       }
-      return { actions: [], method: 'browser', note: 'Could not find drag/drop elements' };
-    } finally {
-      await page.close();
-      await context.close();
+
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+      return { success: true };
+    } catch (err) {
+      throw new BrowserError(`Slider execution failed: ${err.message}`);
     }
   }
 
-  async solveIconCaptcha({ images, image, pageUrl, instruction, selector }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
-    try {
-      if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      return { selections: [], method: 'browser', note: 'Icon captcha requires external service or AI for solving' };
-    } finally {
-      await page.close();
-      await context.close();
+  async solveDragDrop({ pageUrl, sourceSelector, targetSelector }) {
+    if (!sourceSelector || !targetSelector) {
+      throw new BrowserError('sourceSelector and targetSelector required for drag-drop captcha');
     }
-  }
 
-  async solveClickCaptcha({ image, pageUrl, instruction, elements, selector, count }) {
-    await this._ensureBrowser();
-    const context = await this.browser.newContext();
-    const page = await context.newPage();
-
+    const { page, context } = await this._createPage();
     try {
       if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      return { clicks: [], order: [], method: 'browser', note: 'Click captcha requires external service or AI for solving' };
+
+      const source = await page.$(sourceSelector);
+      const target = await page.$(targetSelector);
+
+      if (!source || !target) {
+        throw new BrowserError('Drag-drop elements not found on page');
+      }
+
+      const srcBox = await source.boundingBox();
+      const tgtBox = await target.boundingBox();
+
+      if (!srcBox || !tgtBox) {
+        throw new BrowserError('Could not get drag-drop element bounds');
+      }
+
+      const startX = srcBox.x + srcBox.width / 2;
+      const startY = srcBox.y + srcBox.height / 2;
+      const endX = tgtBox.x + tgtBox.width / 2;
+      const endY = tgtBox.y + tgtBox.height / 2;
+
+      await page.mouse.move(startX, startY);
+      await page.mouse.down();
+
+      const steps = 30;
+      for (let i = 1; i <= steps; i++) {
+        const progress = i / steps;
+        const x = startX + (endX - startX) * progress;
+        const y = startY + (endY - startY) * progress + Math.sin(progress * Math.PI) * 3;
+        await page.mouse.move(x, y);
+        await page.waitForTimeout(15);
+      }
+
+      await page.mouse.up();
+      await page.waitForTimeout(500);
+
+      return { actions: [{ type: 'drag', from: srcBox, to: tgtBox }], method: 'browser' };
     } finally {
-      await page.close();
-      await context.close();
+      await this._cleanup(context);
     }
   }
 
   async close() {
     if (this.browser) {
-      await this.browser.close();
+      try { await this.browser.close(); } catch {}
       this.browser = null;
     }
   }

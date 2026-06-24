@@ -9,44 +9,51 @@ class TurnstileSolver extends BaseSolver {
   }
 
   async solve(config) {
-    const { siteKey, pageUrl, service, apiKey, action, cData, chlPageData } =
-      { ...this.options, ...config };
+    const merged = { ...this.options, ...config };
 
-    if (service) {
-      const ServiceClass = this._getServiceClass(service);
-      if (ServiceClass) {
-        const svc = new ServiceClass(apiKey);
-        return svc.solve({
-          type: 'TurnstileTaskProxyless',
-          websiteURL: pageUrl,
-          websiteKey: siteKey,
-          action: action || '',
-          cData: cData || '',
-          chlPageData: chlPageData || '',
-        });
-      }
+    if (merged.service) {
+      return this._solveViaService(merged);
     }
 
-    const { BrowserAutomation } = require('../browser/BrowserAutomation');
-    const browser = new BrowserAutomation(this.options);
-    const result = await browser.solveTurnstile({ siteKey, pageUrl });
-
-    return {
-      token: result.token,
-      solver: 'TurnstileSolver',
-      method: result.method || 'browser',
-      confidence: 75,
-    };
+    return this._solveLocal(merged);
   }
 
-  _getServiceClass(name) {
+  async _solveLocal(config) {
+    const { BrowserAutomation } = require('../browser/BrowserAutomation');
+    const browser = new BrowserAutomation(this.options);
+    try {
+      const result = await browser.solveTurnstile({
+        siteKey: config.siteKey,
+        pageUrl: config.pageUrl,
+      });
+
+      return {
+        token: result.token,
+        solver: 'TurnstileSolver',
+        method: 'browser',
+        confidence: 75,
+      };
+    } finally {
+      await browser.close();
+    }
+  }
+
+  async _solveViaService(config) {
+    const serviceName = config.service;
     const map = {
       '2captcha': '../services/TwoCaptchaService',
       'anticaptcha': '../services/AntiCaptchaService',
       'capsolver': '../services/CapSolverService',
     };
-    if (!name || !map[name.toLowerCase()]) return null;
-    return require(map[name.toLowerCase()]);
+    const path = map[serviceName?.toLowerCase()];
+    if (!path) throw new Error('No service configured for Turnstile');
+    const ServiceClass = require(path);
+    const svc = new ServiceClass(config.apiKey);
+    return svc.solve({
+      type: 'TurnstileTaskProxyless',
+      websiteURL: config.pageUrl,
+      websiteKey: config.siteKey,
+    });
   }
 }
 

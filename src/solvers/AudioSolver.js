@@ -1,4 +1,5 @@
 const BaseSolver = require('../core/BaseSolver');
+const { transcribeAudio } = require('../utils/audioTranscriber');
 const { SolverError } = require('../core/errors');
 
 class AudioSolver extends BaseSolver {
@@ -9,21 +10,39 @@ class AudioSolver extends BaseSolver {
   }
 
   async solve(config) {
-    const { audio, service, apiKey } = { ...this.options, ...config };
+    const merged = { ...this.options, ...config };
+    const audioInput = merged.audio;
 
-    if (service) {
-      const ServiceClass = this._getServiceClass(service);
+    if (!audioInput) {
+      throw new SolverError('No audio file provided. Set audio path: { audio: "captcha.mp3" }', 'AudioSolver');
+    }
+
+    if (merged.service) {
+      const ServiceClass = this._getServiceClass(merged.service);
       if (ServiceClass) {
-        const svc = new ServiceClass(apiKey);
-        return svc.solve({ type: 'AudioTask', audio });
+        const svc = new ServiceClass(merged.apiKey);
+        return svc.solve({ type: 'AudioTask', audio: audioInput });
       }
     }
 
+    const result = await transcribeAudio(audioInput);
+
+    if (result.text) {
+      return {
+        text: result.text,
+        confidence: result.confidence,
+        solver: 'AudioSolver',
+        method: 'local',
+      };
+    }
+
     throw new SolverError(
-      'Audio captcha requires an external service. Configure one:\n' +
-      '  new DarkCaptcha({ service: "2captcha", apiKey: "..." })\n' +
-      '  OR\n' +
-      '  DarkCaptcha.solve({ type: "audio", audio: "file.mp3", service: "2captcha", apiKey: "..." })',
+      `Audio transcription failed: ${result.error || 'Unknown error'}\n` +
+      'Tips:\n' +
+      '  Windows: Works out of the box with PowerShell speech recognition\n' +
+      '  Mac:    brew install ffmpeg && pip3 install speechrecognition\n' +
+      '  Linux:  sudo apt install ffmpeg python3-pip && pip3 install speechrecognition\n' +
+      '  Or set service + apiKey to use 2captcha/AntiCaptcha/CapSolver',
       'AudioSolver'
     );
   }
