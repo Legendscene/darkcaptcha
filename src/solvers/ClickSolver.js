@@ -97,10 +97,10 @@ class ClickSolver extends BaseSolver {
         const orders = [];
         for (const part of parts) {
           const matches = await solver.findMatchingIcons(images, part);
-          if (matches.length > 0) Orders.push(matches[0]);
+          if (matches.length > 0) orders.push(matches[0]);
         }
-        if (Orders.length > 0) {
-          const clicks = Orders.map((index, order) => elementToClick(index, elements[index], order));
+        if (orders.length > 0) {
+          const clicks = orders.map((index, order) => elementToClick(index, elements[index], order));
           return { clicks, order: clicks.map(c => c.index), solver: 'ClickSolver (AI)', method: 'local-ai', confidence: 60 };
         }
       }

@@ -29,42 +29,44 @@ class CLIPSolver {
   async findBestAngle(imageBuffer) {
     const classifier = await getCLIP();
     const img = await Jimp.read(imageBuffer);
-    const { width, height } = img.bitmap;
-    const angles = [];
-    const step = 15;
+    const centerCrop = Math.min(img.bitmap.width, img.bitmap.height) * 0.6;
+    const cx = Math.floor((img.bitmap.width - centerCrop) / 2);
+    const cy = Math.floor((img.bitmap.height - centerCrop) / 2);
+    const cropped = img.clone().crop(cx, cy, centerCrop, centerCrop);
 
-    for (let angle = 0; angle < 360; angle += step) {
-      const rotated = img.clone().rotate(angle, false);
+    const quadrants = [0, 90, 180, 270];
+    const quadScores = [];
+
+    for (const angle of quadrants) {
+      const rotated = cropped.clone().rotate(angle, false);
       const buf = await rotated.getBufferAsync(Jimp.MIME_PNG);
-      const results = await classifier(buf, [
-        'correctly oriented image', 'upright text', 'straight image',
-        'rotated image', 'tilted image', 'upside down',
-      ]);
-      const correctScore = (results.find(r => r.label === 'correctly oriented image')?.score || 0)
-        + (results.find(r => r.label === 'upright text')?.score || 0)
-        + (results.find(r => r.label === 'straight image')?.score || 0);
-      angles.push({ angle, score: correctScore });
+      const results = await classifier(buf, ['correctly oriented image', 'upright', 'straight', 'rotated image', 'tilted']);
+      const score = (results.find(r => r.label === 'correctly oriented image')?.score || 0)
+        + (results.find(r => r.label === 'upright')?.score || 0)
+        + (results.find(r => r.label === 'straight')?.score || 0);
+      quadScores.push({ angle, score });
     }
 
-    angles.sort((a, b) => b.score - a.score);
+    quadScores.sort((a, b) => b.score - a.score);
+    const bestQuad = quadScores[0].angle;
 
+    const fineStep = 5;
+    const fineStart = Math.max(0, bestQuad - 30);
+    const fineEnd = Math.min(360, bestQuad + 30);
     const fineAngles = [];
-    const best = angles[0];
-    const fineStart = Math.max(0, best.angle - step + 1);
-    const fineEnd = Math.min(360, best.angle + step - 1);
-    for (let angle = fineStart; angle <= fineEnd; angle += 5) {
-      const rotated = img.clone().rotate(angle, false);
+
+    for (let angle = fineStart; angle <= fineEnd; angle += fineStep) {
+      const rotated = cropped.clone().rotate(angle, false);
       const buf = await rotated.getBufferAsync(Jimp.MIME_PNG);
-      const results = await classifier(buf, [
-        'correctly oriented image', 'upright text', 'straight image', 'rotated image',
-      ]);
-      const score = results.find(r => r.label === 'correctly oriented image')?.score || 0;
+      const results = await classifier(buf, ['correctly oriented image', 'upright', 'straight', 'rotated', 'tilted']);
+      const score = (results.find(r => r.label === 'correctly oriented image')?.score || 0)
+        + (results.find(r => r.label === 'upright')?.score || 0)
+        + (results.find(r => r.label === 'straight')?.score || 0);
       fineAngles.push({ angle, score });
     }
-    fineAngles.sort((a, b) => b.score - a.score);
 
-    const correctionAngle = fineAngles[0]?.angle || 0;
-    return correctionAngle === 0 ? 0 : 360 - correctionAngle;
+    fineAngles.sort((a, b) => b.score - a.score);
+    return fineAngles[0]?.angle || 0;
   }
 
   async findCoordinateOnImage(imageBuffer, instruction, gridSize = 3) {

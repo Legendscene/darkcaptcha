@@ -313,7 +313,7 @@ class BrowserAutomation {
     }
   }
 
-  async solveRotate({ buffer, pageUrl, selector }) {
+  async solveRotate({ buffer, pageUrl, selector, targetAngle = 180 }) {
     const { page, context } = await this._createPage();
     try {
       if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
@@ -327,16 +327,18 @@ class BrowserAutomation {
       const cx = box.x + box.width / 2;
       const cy = box.y + box.height / 2;
       const radius = Math.min(box.width, box.height) * 0.4;
-      const angle = 180;
-      const steps = 40;
+      const angle = targetAngle;
+      const steps = Math.max(10, Math.min(50, Math.floor(Math.abs(angle) / 5)));
 
       await page.mouse.move(cx + radius, cy);
       await page.mouse.down();
 
+      const direction = angle >= 0 ? 1 : -1;
+      const absAngle = Math.abs(angle);
       for (let i = 1; i <= steps; i++) {
         const progress = i / steps;
         const ease = 1 - Math.pow(1 - progress, 3);
-        const theta = (angle * ease * Math.PI) / 180;
+        const theta = direction * (absAngle * ease * Math.PI) / 180;
         const x = cx + radius * Math.cos(theta);
         const y = cy + radius * Math.sin(theta);
         await page.mouse.move(x, y);
@@ -351,7 +353,7 @@ class BrowserAutomation {
     }
   }
 
-  async solveCoordinate({ image, pageUrl, instruction, selector }) {
+  async solveCoordinate({ image, pageUrl, instruction, selector, coordinates }) {
     const { page, context } = await this._createPage();
     try {
       if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
@@ -362,29 +364,22 @@ class BrowserAutomation {
       const box = await container.boundingBox();
       if (!box) throw new BrowserError('Could not get container bounds');
 
-      const gridSize = 3;
-      const cellW = box.width / gridSize;
-      const cellH = box.height / gridSize;
-      const clicks = [];
-
-      for (let row = 0; row < gridSize; row++) {
-        for (let col = 0; col < gridSize; col++) {
-          const x = box.x + col * cellW + cellW / 2;
-          const y = box.y + row * cellH + cellH / 2;
-          await page.mouse.click(x, y);
-          await page.waitForTimeout(100);
-          clicks.push({ x: Math.round(x), y: Math.round(y) });
-        }
+      const coords = coordinates && coordinates.length > 0 ? coordinates : [{ x: box.x + box.width / 2, y: box.y + box.height / 2 }];
+      for (const c of coords) {
+        const clickX = box.x + (c.x / (c.naturalWidth || box.width)) * box.width;
+        const clickY = box.y + (c.y / (c.naturalHeight || box.height)) * box.height;
+        await page.mouse.click(clickX, clickY);
+        await page.waitForTimeout(150);
       }
 
-      return { coordinates: clicks, method: 'browser' };
+      return { coordinates: coords, method: 'browser' };
     } finally {
       await this._cleanup(context);
     }
   }
 
   async solveIconCaptcha({ images, pageUrl, instruction, selector }) {
-    const { page } = await this._createPage();
+    const { page, context } = await this._createPage();
     try {
       if (pageUrl) await page.goto(pageUrl, { waitUntil: 'networkidle', timeout: 30000 });
 
@@ -398,7 +393,7 @@ class BrowserAutomation {
       await page.waitForTimeout(300);
       return { selections: [0], method: 'browser' };
     } finally {
-      if (page.context) await this._cleanup(page.context);
+      await this._cleanup(context);
     }
   }
 
