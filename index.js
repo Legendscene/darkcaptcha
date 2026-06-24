@@ -1,4 +1,6 @@
 const DarkCaptcha = require('./src/core/DarkCaptcha');
+const { transcribeAudio } = require('./src/utils/audioTranscriber');
+const CLIPSolver = require('./src/ml/CLIPSolver');
 const BaseSolver = require('./src/core/BaseSolver');
 const { DarkCaptchaError, UnsupportedCaptchaError, SolverError, ServiceError, BrowserError, OcrError } = require('./src/core/errors');
 const Detector = require('./src/detectors/Detector');
@@ -45,6 +47,8 @@ DarkCaptcha.DragDropSolver = DragDropSolver;
 DarkCaptcha.IconSolver = IconSolver;
 DarkCaptcha.ClickSolver = ClickSolver;
 DarkCaptcha.GenericSolver = GenericSolver;
+DarkCaptcha.transcribeAudio = transcribeAudio;
+DarkCaptcha.CLIPSolver = CLIPSolver;
 DarkCaptcha.TwoCaptchaService = TwoCaptchaService;
 DarkCaptcha.AntiCaptchaService = AntiCaptchaService;
 DarkCaptcha.CapSolverService = CapSolverService;
