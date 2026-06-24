@@ -108,33 +108,35 @@ console.log(result.token); // reCAPTCHA response token
         └──────────┘      └──────────┘
 ```
 
-- **Local solvers** – work out of the box (text OCR via Tesseract.js, math parsing)
-- **Service bridges** – delegate to paid captcha-solving services (2captcha, Anti-Captcha, CapSolver)
+- **Local solvers** – work out of the box (text OCR via Tesseract.js, math parsing, AI image analysis, speech-to-text)
 - **Browser automation** – uses Playwright to solve captchas directly in a headless browser
+- **Service bridges** – optional fallback to paid services (2captcha, Anti-Captcha, CapSolver)
 
 ---
 
 ## 🎯 Supported Types
 
-| Type | Identifier | Local | Service | Browser | Notes |
-|------|-----------|-------|---------|---------|-------|
-| Text | `text` | ✅ OCR | — | — | Tesseract.js with image preprocessing |
-| Math | `math` | ✅ Parse | — | — | Arithmetic + word expressions |
-| reCAPTCHA v2 | `recaptcha_v2` | — | ✅ | ✅ | Requires service key or Playwright |
-| reCAPTCHA v3 | `recaptcha_v3` | — | ✅ | ✅ | Requires service key or Playwright |
-| hCaptcha | `hcaptcha` | — | ✅ | ✅ | Requires service key or Playwright |
-| FunCAPTCHA | `funcaptcha` | — | ✅ | ✅ | Arkose Labs |
-| Turnstile | `turnstile` | — | ✅ | ✅ | Cloudflare |
-| Slider | `slider` | ✅ Gap | — | ✅ | Detects gap + generates smooth curve |
-| Puzzle | `puzzle` | — | — | ✅ | Jigsaw / shape puzzle |
-| Image | `image` | — | ✅ | ✅ | "Select all X" style |
-| Audio | `audio` | — | ✅ | — | Speech-to-text via service |
-| Coordinate | `coordinate` | — | ✅ | ✅ | Click at specific coordinates |
-| Rotate | `rotate` | — | — | ✅ | Rotate to correct orientation |
-| Drag & Drop | `dragdrop` | — | — | ✅ | Drag element to target |
-| Icon | `icon` | — | ✅ | ✅ | Select matching icons |
-| Click | `click` | — | ✅ | ✅ | Click in correct order |
-| Generic | `generic` | ✅ Fallback | ✅ | ✅ | Tries text → math → service |
+| Type | Identifier | Local | Method |
+|------|-----------|-------|--------|
+| Text | `text` | ✅ | OCR (Tesseract.js) |
+| Math | `math` | ✅ | Expression parser |
+| reCAPTCHA v2 | `recaptcha_v2` | ✅ | Playwright click or AI audio/image |
+| reCAPTCHA v3 | `recaptcha_v3` | ✅ | Playwright token extraction |
+| hCaptcha | `hcaptcha` | ✅ | Playwright click or AI image |
+| FunCAPTCHA | `funcaptcha` | ✅ | Playwright token extraction |
+| Turnstile | `turnstile` | ✅ | Playwright token extraction |
+| Slider | `slider` | ✅ | Gap detection + smooth drag curve |
+| Puzzle | `puzzle` | ✅ | Playwright element interaction |
+| Image | `image` | ✅ | CLIP AI zero-shot classification |
+| Audio | `audio` | ✅ | Speech-to-text (built-in OS or whisper) |
+| Coordinate | `coordinate` | ❌ | Needs AI or service |
+| Rotate | `rotate` | ❌ | Needs AI or service |
+| Drag & Drop | `dragdrop` | ✅ | Playwright mouse drag |
+| Icon | `icon` | ❌ | Needs AI or service |
+| Click | `click` | ❌ | Needs AI or service |
+| Generic | `generic` | ✅ | Auto-fallback via text → math → AI |
+
+---
 
 ---
 
@@ -181,8 +183,6 @@ Create a reusable instance with persistent configuration.
 
 ```js
 const solver = new DarkCaptcha({
-  service: '2captcha',
-  apiKey: 'your-key',
   defaultType: 'auto',
   timeout: 120000,
 });
@@ -220,33 +220,6 @@ darkcaptcha --help
 
 ---
 
-## 🔌 External Services
-
-For captcha types that can't be solved locally (reCAPTCHA, hCaptcha, image selection, audio, etc.), you need an external solving service.
-
-| Service | Sign Up | How It Works |
-|---------|---------|-------------|
-| [2captcha](https://2captcha.com) | Create account → get API key | Human-powered solving |
-| [Anti-Captcha](https://anti-captcha.com) | Create account → get API key | Human-powered solving |
-| [CapSolver](https://capsolver.com) | Create account → get API key | AI + human hybrid |
-
-```js
-// Method 1: Pass in config
-const result = await DarkCaptcha.solve({
-  type: 'hcaptcha',
-  siteKey: 'SITE_KEY',
-  pageUrl: 'https://example.com',
-  service: '2captcha',
-  apiKey: 'YOUR_API_KEY',
-});
-
-// Method 2: Configure on instance
-const solver = new DarkCaptcha({ service: '2captcha', apiKey: '...' });
-const result = await solver.resolve({ type: 'hcaptcha', siteKey: '...', pageUrl: '...' });
-```
-
----
-
 ## 🧩 Examples
 
 ### Slider captcha — detect gap and generate movement curve
@@ -262,19 +235,27 @@ console.log(`Generated ${result.steps.length} movement steps`);
 // Use result.steps with Playwright/Puppeteer to execute the slide
 ```
 
-### reCAPTCHA v3 with Auto-Captcha service
+### reCAPTCHA v2/v3 from browser page
 
 ```js
 const result = await DarkCaptcha.solve({
-  type: 'recaptcha_v3',
+  type: 'recaptcha_v2',
   siteKey: '6Lc...',
   pageUrl: 'https://example.com',
-  action: 'submit_form',
-  minScore: 0.7,
-  service: 'anticaptcha',
-  apiKey: '...',
 });
 ```
+Requires Playwright. Clicks checkbox or solves audio/image challenge automatically.
+
+### Image captcha with AI
+
+```js
+const result = await DarkCaptcha.solve({
+  type: 'image',
+  images: ['tile1.png', 'tile2.png', ...],  // tile images from captcha grid
+  question: 'Select all crosswalks',
+});
+```
+Uses CLIP AI model. Install: `npm install @xenova/transformers`
 
 ### Auto-detect from image URL
 
@@ -289,7 +270,7 @@ const result = await DarkCaptcha.solve({
 
 ## 🤖 Auto-Solve (Playwright Integration)
 
-DarkCaptcha can **automatically detect and solve captchas** on any page without writing per-site logic. It watches for reCAPTCHA, hCaptcha, Turnstile, and FunCAPTCHA iframes, extracts site keys, solves them, and injects the token — all automatically.
+DarkCaptcha can **automatically detect and solve captchas** on any page without writing per-site logic. It watches for reCAPTCHA, hCaptcha, Turnstile, and FunCAPTCHA iframes, extracts site keys, solves them (locally via OCR/AI/STT or Playwright), and injects the token — all automatically. No paid services needed.
 
 ### Simple auto-solve
 
@@ -303,52 +284,14 @@ const { autoSolve } = require('darkcaptcha');
 
   // Start auto-solve watchdog (watches for captchas automatically)
   const watchdog = await autoSolve(page, {
-    service: '2captcha',
-    apiKey: 'your-api-key',
+    autoClick: true,
   });
 
   await page.goto('https://example.com/signup');
   // Captchas are solved automatically — no extra code needed
 
-  // ... fill form, click submit, etc.
+  // ... fill form, click submit, etc. — captchas are auto-solved
 
-  await watchdog.stop();
-  await browser.close();
-})();
-```
-
-### Discord account creation example
-
-```js
-const { chromium } = require('playwright');
-const { autoSolve } = require('darkcaptcha');
-
-(async () => {
-  const browser = await chromium.launch({ headless: false });
-  const page = await browser.newPage();
-
-  const watchdog = await autoSolve(page, {
-    service: '2captcha',      // ← required for hCaptcha (Discord uses hCaptcha)
-    apiKey: 'YOUR_2CAPTCHA_KEY',
-    autoClick: true,           // auto-clicks submit after solving
-  });
-
-  await page.goto('https://discord.com/register');
-
-  // Fill registration form
-  await page.fill('input[name="email"]', 'email@example.com');
-  await page.fill('input[name="username"]', 'MyUsername');
-  await page.fill('input[name="password"]', 'SecurePass123');
-  await page.fill('input[name="dateOfBirth"]', '2000-01-01');
-
-  // Click Continue — captcha appears, watchdog auto-solves it
-  await page.click('button[type="submit"]');
-
-  // The watchdog detects the hCaptcha iframe, extracts site key,
-  // sends to 2captcha, waits for solution, injects the token,
-  // and clicks submit — all automatically.
-
-  await page.waitForTimeout(15000); // wait for verification
   await watchdog.stop();
   await browser.close();
 })();
@@ -363,7 +306,7 @@ const { autoSolve } = require('darkcaptcha');
 5. **Injection** — sets the token in the appropriate textarea and triggers callbacks
 6. **Auto-submit** — optionally clicks the submit/continue button after solving
 
-> **Note:** Auto-solve requires Playwright installed (`npm install playwright && npx playwright install chromium`) and an external solving service for non-text captchas.
+> **Note:** Auto-solve requires Playwright installed (`npm install playwright && npx playwright install chromium`). For image captchas, install AI support: `npm install @xenova/transformers`.
 
 ## ⚠️ Error Handling
 
